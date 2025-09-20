@@ -17,9 +17,20 @@ def init_db():
             timestamp TEXT,
             item_name TEXT,
             quantity INTEGER,
+            rarity TEXT,
+            value INTEGER,
             PRIMARY KEY (character, timestamp, item_name)
         )
     ''')
+    # Try to add missing columns if upgrading an older DB
+    try:
+        cursor.execute("ALTER TABLE inventories ADD COLUMN rarity TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE inventories ADD COLUMN value INTEGER")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     return conn
 
@@ -57,10 +68,17 @@ def load_json_files(folder, conn):
                         for item in data.get("Items", []):
                             name = item.get("Name")
                             stack = item.get("StackSize", 1)
+                            rarity = item.get("Rarity")
+                            value = item.get("Value")
                             if name:
-                                item_dict[name] = item_dict.get(name, 0) + stack
-                        for name, qty in item_dict.items():
-                            cursor.execute("INSERT OR REPLACE INTO inventories VALUES (?, ?, ?, ?)", (character, timestamp, name, qty))
+                                if name not in item_dict:
+                                    item_dict[name] = {"qty": 0, "rarity": rarity, "value": value}
+                                item_dict[name]["qty"] += stack
+                        for name, info in item_dict.items():
+                            cursor.execute(
+                                "INSERT OR REPLACE INTO inventories VALUES (?, ?, ?, ?, ?, ?)",
+                                (character, timestamp, name, info["qty"], info["rarity"], info["value"])
+                            )
                         conn.commit()
                 except json.JSONDecodeError:
                     pass
@@ -99,10 +117,17 @@ def load_latest_if_new(folder, conn, char):
                 for item in data.get("Items", []):
                     name = item.get("Name")
                     stack = item.get("StackSize", 1)
+                    rarity = item.get("Rarity")
+                    value = item.get("Value")
                     if name:
-                        item_dict[name] = item_dict.get(name, 0) + stack
-                for name, qty in item_dict.items():
-                    cursor.execute("INSERT OR REPLACE INTO inventories VALUES (?, ?, ?, ?)", (char, timestamp, name, qty))
+                        if name not in item_dict:
+                            item_dict[name] = {"qty": 0, "rarity": rarity, "value": value}
+                        item_dict[name]["qty"] += stack
+                for name, info in item_dict.items():
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO inventories VALUES (?, ?, ?, ?, ?, ?)",
+                        (char, timestamp, name, info["qty"], info["rarity"], info["value"])
+                    )
                 conn.commit()
                 return timestamp
     return None
@@ -110,71 +135,90 @@ def load_latest_if_new(folder, conn, char):
 def get_items_at_timestamp(conn, char, ts):
     cursor = conn.cursor()
     cursor.execute("SELECT item_name, quantity FROM inventories WHERE character=? AND timestamp=?", (char, ts))
-    return dict(cursor.fetchall())
+    return {row[0]: row[1] for row in cursor.fetchall()}
 
 class App:
     def __init__(self, root):
         self.root = root
         self.root.title("Project Gorgon Inventory Comparator")
 
+        # Left frame for controls
+        left_frame = tk.Frame(root)
+        left_frame.grid(row=0, column=0, sticky="nw", padx=5, pady=2)
+
         self.folder = tk.StringVar(value=r"C:\Users\USER\AppData\LocalLow\Elder Game\Project Gorgon\Reports")
-        tk.Label(root, text="Folder:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
-        tk.Entry(root, textvariable=self.folder, width=50).grid(row=0, column=1, padx=5, pady=5)
-        tk.Button(root, text="Browse", command=self.browse_folder).grid(row=0, column=2, padx=5, pady=5)
+        tk.Label(left_frame, text="Folder:").grid(row=0, column=0, sticky="w", pady=1)
+        tk.Entry(left_frame, textvariable=self.folder, width=50).grid(row=0, column=1, pady=1)
+        tk.Button(left_frame, text="Browse", command=self.browse_folder).grid(row=0, column=2, pady=1)
 
-        tk.Button(root, text="Load Data", command=self.load_data).grid(row=1, column=0, columnspan=3, pady=5)
+        tk.Button(left_frame, text="Load Data", command=self.load_data).grid(row=1, column=0, columnspan=3, pady=1)
 
-        self.char_label = tk.Label(root, text="Character:")
-        self.char_label.grid(row=2, column=0, sticky="w", padx=5, pady=5)
-        self.char_combo = ttk.Combobox(root)
-        self.char_combo.grid(row=2, column=1, padx=5, pady=5)
+        tk.Label(left_frame, text="Character:").grid(row=2, column=0, sticky="w", pady=1)
+        self.char_combo = ttk.Combobox(left_frame)
+        self.char_combo.grid(row=2, column=1, pady=1)
         self.char_combo.bind("<<ComboboxSelected>>", self.update_ref_timestamps)
 
-        self.ref_ts_label = tk.Label(root, text="Reference Timestamp:")
-        self.ref_ts_label.grid(row=3, column=0, sticky="w", padx=5, pady=5)
-        self.ref_ts_combo = ttk.Combobox(root)
-        self.ref_ts_combo.grid(row=3, column=1, padx=5, pady=5)
+        tk.Label(left_frame, text="Reference Timestamp:").grid(row=3, column=0, sticky="w", pady=1)
+        self.ref_ts_combo = ttk.Combobox(left_frame)
+        self.ref_ts_combo.grid(row=3, column=1, pady=1)
         self.ref_ts_combo.bind("<<ComboboxSelected>>", self.update_comp_timestamps)
 
-        self.comp_ts_label = tk.Label(root, text="Compare To:")
-        self.comp_ts_label.grid(row=4, column=0, sticky="w", padx=5, pady=5)
-        self.comp_ts_combo = ttk.Combobox(root)
-        self.comp_ts_combo.grid(row=4, column=1, padx=5, pady=5)
+        tk.Label(left_frame, text="Compare To:").grid(row=4, column=0, sticky="w", pady=1)
+        self.comp_ts_combo = ttk.Combobox(left_frame)
+        self.comp_ts_combo.grid(row=4, column=1, pady=1)
 
-        tk.Button(root, text="Compare", command=self.compare).grid(row=5, column=0, columnspan=3, pady=5)
+        tk.Button(left_frame, text="Compare", command=self.compare).grid(row=5, column=0, columnspan=3, pady=1)
 
-        self.time_diff = tk.Label(root, text="")
-        self.time_diff.grid(row=6, column=0, columnspan=3, pady=5)
+        self.time_diff = tk.Label(left_frame, text="")
+        self.time_diff.grid(row=6, column=0, columnspan=3, pady=1)
 
-        tk.Label(root, text="Filter:").grid(row=7, column=0, sticky="w", padx=5, pady=5)
-        self.filter_entry = tk.Entry(root)
-        self.filter_entry.grid(row=7, column=1, padx=5, pady=5)
+        tk.Label(left_frame, text="Filter:").grid(row=7, column=0, sticky="w", pady=1)
+        self.filter_entry = tk.Entry(left_frame)
+        self.filter_entry.grid(row=7, column=1, pady=1)
         self.filter_entry.bind("<KeyRelease>", self.update_list)
 
-        tk.Label(root, text="View:").grid(row=7, column=2, sticky="w", padx=5, pady=5)
+        tk.Label(left_frame, text="View:").grid(row=8, column=0, sticky="w", pady=1)
         self.view_mode = tk.StringVar(value="Both")
-        self.view_combo = ttk.Combobox(root, textvariable=self.view_mode, values=["Both", "Gained", "Lost"])
-        self.view_combo.grid(row=7, column=3, padx=5, pady=5)
+        self.view_combo = ttk.Combobox(left_frame, textvariable=self.view_mode, values=["Both", "Gained", "Lost"])
+        self.view_combo.grid(row=8, column=1, pady=1)
         self.view_combo.bind("<<ComboboxSelected>>", self.update_list)
 
-        # Use Treeview for results with grid lines and alternating colors
-        self.results_tree = ttk.Treeview(root, columns=("Item", "Change"), show="headings", height=20)
-        self.results_tree.heading("Item", text="Item")
-        self.results_tree.heading("Change", text="Change")
+        tk.Label(left_frame, text="Sort By:").grid(row=9, column=0, sticky="w", pady=1)
+        self.sort_mode = tk.StringVar(value="Name")
+        self.sort_combo = ttk.Combobox(left_frame, textvariable=self.sort_mode, values=["Name", "Change"])
+        self.sort_combo.grid(row=9, column=1, pady=1)
+        self.sort_combo.bind("<<ComboboxSelected>>", self.update_list)
+
+        # Notebook for tabs
+        self.notebook = ttk.Notebook(root)
+        self.notebook.grid(row=0, column=1, rowspan=10, sticky="nsew", padx=5, pady=2)
+
+        # Details tab
+        details_frame = tk.Frame(self.notebook)
+        self.notebook.add(details_frame, text="Details")
+
+        self.results_tree = ttk.Treeview(details_frame, columns=("Item", "Change"), show="headings", height=20)
+        self.results_tree.heading("Item", text="Item", command=lambda: self.treeview_sort_column(self.results_tree, "Item", False))
+        self.results_tree.heading("Change", text="Change", command=lambda: self.treeview_sort_column(self.results_tree, "Change", False))
         self.results_tree.column("Item", width=400)
         self.results_tree.column("Change", width=100)
-        self.results_tree.grid(row=8, column=0, columnspan=4, padx=5, pady=5)
+        self.results_tree.pack(fill="both", expand=True)
 
-        # Add alternating background colors
         self.results_tree.tag_configure("oddrow", background="#f0f0f0")
         self.results_tree.tag_configure("evenrow", background="#ffffff")
         self.results_tree.tag_configure("gained", foreground="green")
         self.results_tree.tag_configure("lost", foreground="red")
 
-        # Add grid lines
         style = ttk.Style()
         style.configure("Treeview", rowheight=25)
         style.configure("Treeview.Heading", font=("Arial", 12))
+
+        # Summary tab
+        summary_frame = tk.Frame(self.notebook)
+        self.notebook.add(summary_frame, text="Summary")
+
+        self.summary_text = tk.Text(summary_frame, height=20, width=60, font=("Arial", 12))
+        self.summary_text.pack(fill="both", expand=True)
 
         self.conn = init_db()
         self.timestamps = {}
@@ -189,14 +233,12 @@ class App:
             self.folder.set(folder)
 
     def load_data(self):
-        # Store previous selections
         self.prev_char = self.char_combo.get()
         self.prev_ref_ts = self.ref_ts_combo.get()
         load_json_files(self.folder.get(), self.conn)
         chars = get_characters(self.conn)
         self.char_combo['values'] = chars
         if chars:
-            # Restore previous character or set to first
             if self.prev_char in chars:
                 self.char_combo.set(self.prev_char)
             else:
@@ -210,7 +252,6 @@ class App:
             self.timestamps[char] = ts_list
             self.ref_ts_combo['values'] = ts_list
             if ts_list:
-                # Restore previous timestamp or set to latest
                 if self.prev_ref_ts in ts_list:
                     self.ref_ts_combo.set(self.prev_ref_ts)
                 else:
@@ -267,3 +308,139 @@ class App:
                 changes[name] = delta
 
         ref_dt = parse_timestamp(self.ref_ts)
+        comp_dt = parse_timestamp(self.comp_ts)
+        delta_time = comp_dt - ref_dt
+        days = delta_time.days
+        hours, remainder = divmod(delta_time.seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        self.time_diff.config(text=f"Time between logs: {days} days, {hours} hours, {minutes} minutes")
+
+        self.changes = changes
+        self.update_list()
+
+    def update_list(self, event=None):
+        filter_text = self.filter_entry.get().lower()
+        view = self.view_mode.get()
+        sort = self.sort_mode.get()
+        self.results_tree.delete(*self.results_tree.get_children())
+        items = list(self.changes.items())
+        if view == "Gained":
+            items = [item for item in items if item[1] > 0]
+        elif view == "Lost":
+            items = [item for item in items if item[1] < 0]
+        items = [item for item in items if filter_text in item[0].lower()]
+        if sort == "Name":
+            items.sort(key=lambda x: x[0])
+        else:
+            items.sort(key=lambda x: -abs(x[1]))
+        for i, (name, delta) in enumerate(items):
+            sign = "+" if delta > 0 else ""
+            tag = "gained" if delta > 0 else "lost"
+            row_tag = "evenrow" if i % 2 == 0 else "oddrow"
+            self.results_tree.insert("", "end", values=(name, f"{sign}{delta}"), tags=(tag, row_tag))
+        self.update_summary()
+
+    def update_summary(self):
+        view = self.view_mode.get()
+        self.summary_text.delete(1.0, tk.END)
+        if not hasattr(self, 'changes'):
+            return
+
+        gained = {name: d for name, d in self.changes.items() if d > 0}
+        lost = {name: -d for name, d in self.changes.items() if d < 0}
+
+        cursor = self.conn.cursor()
+        rarity_counts = {}
+        rarity_values = {}
+        misc_over_1k = 0
+        misc_under_1k = 0
+        misc_over_1k_value = 0
+        misc_under_1k_value = 0
+        phlogiston_prism_items = {}
+
+        # Calculate totals for gained items
+        for name, delta in gained.items():
+            cursor.execute("SELECT rarity, value FROM inventories WHERE item_name=? ORDER BY timestamp DESC LIMIT 1", (name,))
+            row = cursor.fetchone()
+            rarity, value = (row if row else (None, None))
+
+            # Check for Phlogiston or Prism items
+            if "phlogiston" in name.lower() or "prism" in name.lower():
+                phlogiston_prism_items[name] = delta
+
+            if rarity:
+                rarity_counts[rarity] = rarity_counts.get(rarity, 0) + delta
+                if value is not None:
+                    rarity_values[rarity] = rarity_values.get(rarity, 0) + (value * delta)
+            elif value is not None:
+                if value >= 1000:
+                    misc_over_1k += delta
+                    misc_over_1k_value += value * delta
+                else:
+                    misc_under_1k += delta
+                    misc_under_1k_value += value * delta
+
+        # Check lost items for Phlogiston/Prism
+        for name, delta in lost.items():
+            if "phlogiston" in name.lower() or "prism" in name.lower():
+                if name in phlogiston_prism_items:
+                    phlogiston_prism_items[name] -= delta
+                else:
+                    phlogiston_prism_items[name] = -delta
+
+        total_gained = sum(gained.values())
+        total_lost = sum(lost.values())
+
+        # Display overall totals
+        if view in ["Both", "Gained"] and total_gained > 0:
+            self.summary_text.insert(tk.END, f"Overall Gained: +{total_gained}\n")
+        
+        if view in ["Both", "Lost"] and total_lost > 0:
+            self.summary_text.insert(tk.END, f"Overall Lost: -{total_lost}\n")
+
+        # Phlogiston and Prism items section
+        if phlogiston_prism_items:
+            self.summary_text.insert(tk.END, "\nPhlogiston & Prism Items:\n")
+            for item_name, change in sorted(phlogiston_prism_items.items()):
+                if change != 0:
+                    sign = "+" if change > 0 else ""
+                    self.summary_text.insert(tk.END, f"  {item_name}: {sign}{change}\n")
+
+        # Rarity breakdown with values
+        if rarity_counts:
+            self.summary_text.insert(tk.END, "\nRarity Breakdown:\n")
+            for rarity in sorted(rarity_counts.keys()):
+                count = rarity_counts[rarity]
+                value = rarity_values.get(rarity, 0)
+                if value > 0:
+                    self.summary_text.insert(tk.END, f"  {rarity} Gear: +{count} | Value: {value:,}\n")
+                else:
+                    self.summary_text.insert(tk.END, f"  {rarity} Gear: +{count}\n")
+
+        # Misc breakdown with values
+        if misc_over_1k or misc_under_1k:
+            self.summary_text.insert(tk.END, "\nMisc Items:\n")
+            if misc_over_1k:
+                self.summary_text.insert(tk.END, f"  Misc over 1k: +{misc_over_1k} | Value: {misc_over_1k_value:,}\n")
+            if misc_under_1k:
+                self.summary_text.insert(tk.END, f"  Misc under 1k: +{misc_under_1k} | Value: {misc_under_1k_value:,}\n")
+
+        # Total value summary
+        total_category_value = sum(rarity_values.values()) + misc_over_1k_value + misc_under_1k_value
+        if total_category_value > 0:
+            self.summary_text.insert(tk.END, f"\nTotal Value of All Categories: {total_category_value:,}\n")
+
+    def treeview_sort_column(self, tv, col, reverse):
+        items = [(tv.set(k, col), k) for k in tv.get_children('')]
+        try:
+            items.sort(key=lambda t: int(t[0]), reverse=reverse)
+        except ValueError:
+            items.sort(reverse=reverse)
+        for index, (val, k) in enumerate(items):
+            tv.move(k, '', index)
+        tv.heading(col, command=lambda: self.treeview_sort_column(tv, col, not reverse))
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = App(root)
+    root.mainloop()
