@@ -220,6 +220,12 @@ class App:
         self.summary_text = tk.Text(summary_frame, height=20, width=60, font=("Arial", 12))
         self.summary_text.pack(fill="both", expand=True)
 
+        # Configure tags for styling
+        self.summary_text.tag_configure("header", font=("Arial", 14, "bold"))
+        self.summary_text.tag_configure("bold", font=("Arial", 12, "bold"))
+        self.summary_text.tag_configure("green", foreground="green")
+        self.summary_text.tag_configure("red", foreground="red")
+
         self.conn = init_db()
         self.timestamps = {}
         self.ref_ts = None
@@ -393,42 +399,56 @@ class App:
 
         # Display overall totals
         if view in ["Both", "Gained"] and total_gained > 0:
-            self.summary_text.insert(tk.END, f"Overall Gained: +{total_gained}\n")
+            self.summary_text.insert(tk.END, "Overall Gained: ", "bold")
+            self.summary_text.insert(tk.END, f"+{total_gained}\n", "green")
         
         if view in ["Both", "Lost"] and total_lost > 0:
-            self.summary_text.insert(tk.END, f"Overall Lost: -{total_lost}\n")
+            self.summary_text.insert(tk.END, "Overall Lost: ", "bold")
+            self.summary_text.insert(tk.END, f"-{total_lost}\n", "red")
 
         # Phlogiston and Prism items section
         if phlogiston_prism_items:
-            self.summary_text.insert(tk.END, "\nPhlogiston & Prism Items:\n")
+            self.summary_text.insert(tk.END, "\nPhlogiston & Prism Items:\n", "header")
             for item_name, change in sorted(phlogiston_prism_items.items()):
                 if change != 0:
+                    self.summary_text.insert(tk.END, f"  {item_name}: ")
                     sign = "+" if change > 0 else ""
-                    self.summary_text.insert(tk.END, f"  {item_name}: {sign}{change}\n")
+                    color = "green" if change > 0 else "red"
+                    self.summary_text.insert(tk.END, f"{sign}{change}\n", color)
 
         # Rarity breakdown with values
         if rarity_counts:
-            self.summary_text.insert(tk.END, "\nRarity Breakdown:\n")
+            self.summary_text.insert(tk.END, "\nRarity Breakdown:\n", "header")
             for rarity in sorted(rarity_counts.keys()):
                 count = rarity_counts[rarity]
                 value = rarity_values.get(rarity, 0)
+                self.summary_text.insert(tk.END, f"  {rarity} Gear: ")
+                self.summary_text.insert(tk.END, f"+{count}", "green")
                 if value > 0:
-                    self.summary_text.insert(tk.END, f"  {rarity} Gear: +{count} | Value: {value:,}\n")
+                    self.summary_text.insert(tk.END, f" | Value: ")
+                    self.summary_text.insert(tk.END, f"{value:,}\n", "green")
                 else:
-                    self.summary_text.insert(tk.END, f"  {rarity} Gear: +{count}\n")
+                    self.summary_text.insert(tk.END, "\n")
 
         # Misc breakdown with values
         if misc_over_1k or misc_under_1k:
-            self.summary_text.insert(tk.END, "\nMisc Items:\n")
+            self.summary_text.insert(tk.END, "\nMisc Items:\n", "header")
             if misc_over_1k:
-                self.summary_text.insert(tk.END, f"  Misc over 1k: +{misc_over_1k} | Value: {misc_over_1k_value:,}\n")
+                self.summary_text.insert(tk.END, f"  Misc over 1k: ")
+                self.summary_text.insert(tk.END, f"+{misc_over_1k}", "green")
+                self.summary_text.insert(tk.END, f" | Value: ")
+                self.summary_text.insert(tk.END, f"{misc_over_1k_value:,}\n", "green")
             if misc_under_1k:
-                self.summary_text.insert(tk.END, f"  Misc under 1k: +{misc_under_1k} | Value: {misc_under_1k_value:,}\n")
+                self.summary_text.insert(tk.END, f"  Misc under 1k: ")
+                self.summary_text.insert(tk.END, f"+{misc_under_1k}", "green")
+                self.summary_text.insert(tk.END, f" | Value: ")
+                self.summary_text.insert(tk.END, f"{misc_under_1k_value:,}\n", "green")
 
         # Total value summary
         total_category_value = sum(rarity_values.values()) + misc_over_1k_value + misc_under_1k_value
         if total_category_value > 0:
-            self.summary_text.insert(tk.END, f"\nTotal Value of All Categories: {total_category_value:,}\n")
+            self.summary_text.insert(tk.END, f"\nTotal Value of All Categories: ", "bold")
+            self.summary_text.insert(tk.END, f"{total_category_value:,}\n", "green")
 
     def treeview_sort_column(self, tv, col, reverse):
         items = [(tv.set(k, col), k) for k in tv.get_children('')]
